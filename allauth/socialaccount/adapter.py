@@ -13,6 +13,8 @@ from ..account.adapter import get_adapter as get_account_adapter
 from ..account import app_settings as account_settings
 from ..account.app_settings import EmailVerificationMethod
 
+from .models import SocialAccount
+
 from . import app_settings
 
 
@@ -110,6 +112,29 @@ class DefaultSocialAccountAdapter(object):
                     raise ValidationError(_("Your account has no verified"
                                             " e-mail address."))
 
+    def email_is_verified(self, sociallogin, email):
+        ret = False
+        try:
+            eadd = EmailAddress.objects.get(email=email)
+            userid = eadd.user_id
+            if not eadd.verified:
+                return False
+
+            ret = False
+            for soc_account in SocialAccount.objects.filter(user_id=userid):
+                ret = True #make sure we only return true if there was
+                           #an account
+                if not (soc_account.extra_data and \
+                        soc_account.extra_data.get('verified', False)):
+                    return False
+        except EmailAddress.DoesNotExist:
+            return False
+        except EmailAddress.MultipleObjectsReturned:
+            return False #safe fallback?
+
+        return ret
+
+
     def is_auto_signup_allowed(self, request, sociallogin):
         # If email is specified, check for duplicate and if so, no auto signup.
         auto_signup = app_settings.AUTO_SIGNUP
@@ -127,7 +152,8 @@ class DefaultSocialAccountAdapter(object):
                         # the hope that you fall in his trap.  We cannot check
                         # on 'email_address.verified' either, because
                         # 'email_address' is not guaranteed to be verified.
-                        auto_signup = False
+                        if not self.email_is_verified(sociallogin, email):
+                            auto_signup = False
                         # FIXME: We redirect to signup form -- user will
                         # see email address conflict only after posting
                         # whereas we detected it here already.

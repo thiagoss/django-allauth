@@ -13,10 +13,13 @@ from allauth.account import app_settings as account_settings
 from allauth.account.adapter import get_adapter as get_account_adapter
 from allauth.exceptions import ImmediateHttpResponse
 
-from .models import SocialLogin
+from .models import SocialLogin, EmailAddress
 from . import app_settings
 from . import signals
 from .adapter import get_adapter
+
+from ..utils import email_address_exists
+from ..account.utils import user_email
 
 User = get_user_model()
 
@@ -30,6 +33,17 @@ def _process_signup(request, sociallogin):
         ret = HttpResponseRedirect(url)
     else:
         # Ok, auto signup it is, at least the e-mail address is ok.
+        email = user_email(sociallogin.account.user)
+        if email and account_settings.UNIQUE_EMAIL and email_address_exists(email):
+            sociallogin.connect(request, EmailAddress.objects.get(email=email).user)
+            try:
+                signals.social_account_added.send(sender=SocialLogin,
+                                                  request=request,
+                                                  sociallogin=sociallogin)
+            except ImmediateHttpResponse as e:
+                return e
+            return complete_social_signup(request, sociallogin)
+
         # We still need to check the username though...
         if account_settings.USER_MODEL_USERNAME_FIELD:
             username = user_username(sociallogin.account.user)
@@ -64,7 +78,6 @@ def render_authentication_error(request, extra_context={}):
     return render_to_response(
         "socialaccount/authentication_error.html",
         extra_context, context_instance=RequestContext(request))
-
 
 def _add_social_account(request, sociallogin):
     if request.user.is_anonymous():
